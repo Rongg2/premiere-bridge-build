@@ -1,0 +1,51 @@
+name: Build Premiere server for Windows
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Read the exact upstream source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ayushozha/AdobePremiereProMCP
+          ref: 36574e4920d56ae71efeb055ba8e2af827b2106c
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go-orchestrator/go.mod
+          cache: false
+      - uses: bufbuild/buf-action@37ac33d8960807670a6e9719080e885197b09cc6
+        with:
+          version: '1.72.0'
+          setup_only: true
+      - name: Generate protocol files
+        run: buf generate
+      - name: Build server with locked dependencies
+        working-directory: go-orchestrator
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force bin | Out-Null
+          go build -mod=readonly -o bin/server.exe ./cmd/server
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          go mod verify
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          git diff --exit-code HEAD
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $hash = (Get-FileHash bin/server.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  server.exe" | Set-Content -Encoding ascii bin/SHA256SUMS.txt
+          "SHA256 of server.exe: $hash" >> $env:GITHUB_STEP_SUMMARY
+      - name: Keep the server and its checksum
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: premiere-windows-server
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            go-orchestrator/bin/server.exe
+            go-orchestrator/bin/SHA256SUMS.txt
